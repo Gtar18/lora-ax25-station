@@ -1,0 +1,22 @@
+# ข้อมูลที่เกิดตอนใช้งาน (ไม่ขึ้น git)
+logs/*
+!logs/.gitkeep
+received_images/*
+!received_images/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+
+# Arduino build
+build/
+*.bin
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# รูปของผู้ใช้ (เก็บเฉพาะรูปทดสอบ)
+images_to_send/*
+!images_to_send/test_pattern.jpg

@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LoRa Web Station</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #6b7385; --line: #e3e6ec;
+    --ok: #1f9d55; --rec: #d99a00; --lost: #d64545; --pend: #c5cad3; --accent: #2f6fdb;
+    --term-bg: #0f1218; --term-text: #d7dce5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1b1f27; --text: #e6e9ef; --muted: #8d95a7; --line: #2b313c;
+      --ok: #35c27a; --rec: #f0b429; --lost: #f06363; --pend: #3a414e; --accent: #6c9cff;
+      --term-bg: #0b0d12;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, "Segoe UI", "Noto Sans Thai", sans-serif; }
+  header { padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--card);
+           display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 18px; margin: 0; }
+  .meta { color: var(--muted); font-size: 12px; }
+  main { max-width: 1300px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+  .card h2 { font-size: 15px; margin: 0 0 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .tile .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .tile .l { color: var(--muted); font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  .scroll { overflow-x: auto; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--bg); color: var(--text);
+           border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  select, input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+                  padding: 4px 8px; font: inherit; }
+
+  /* terminals */
+  .terms { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+  @media (max-width: 700px) { .terms { grid-template-columns: 1fr; } }
+  .term { background: var(--term-bg); color: var(--term-text); border-radius: 8px; overflow: hidden;
+          display: flex; flex-direction: column; border: 1px solid var(--line); }
+  .term .out { height: 360px; overflow-y: auto; padding: 8px 10px; font: 12.5px/1.45 ui-monospace, Consolas, monospace;
+               white-space: pre-wrap; word-break: break-word; }
+  .term .out .ts { color: #5c6577; margin-right: 6px; }
+  .term .k-in { color: #7fd4ff; } .term .k-tx { color: #8ab4ff; } .term .k-rx { color: #7ee2a8; }
+  .term .k-err { color: #ff8a8a; } .term .k-sys { color: #aab2c0; } .term .k-prog { color: #f5d06f; }
+  .term form { display: flex; border-top: 1px solid #262c38; }
+  .term form span { padding: 8px 4px 8px 10px; color: #7fd4ff; font-family: ui-monospace, Consolas, monospace; }
+  .term form input { flex: 1; background: transparent; border: 0; color: var(--term-text); padding: 8px;
+                     font: 13px ui-monospace, Consolas, monospace; outline: none; border-radius: 0; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--pend); }
+  .dot.on { background: var(--ok); } .dot.busy { background: var(--rec); }
+  .quick { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+  .quick button { padding: 2px 8px; font-size: 12px; }
+
+  /* images */
+  .imgs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .imgc { border: 1px solid var(--line); border-radius: 8px; padding: 8px; display: grid; gap: 6px; }
+  .imgc img { width: 100%; height: 100px; object-fit: cover; border-radius: 4px; background: var(--bg); }
+  .imgc .n { font-size: 12px; word-break: break-all; }
+  .sendopts { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; font-size: 13px; }
+  .sendopts input[type=number] { width: 70px; }
+
+  /* grid */
+  .grid { display: flex; flex-wrap: wrap; gap: 3px; margin: 8px 0; }
+  .cell { width: 15px; height: 15px; border-radius: 3px; background: var(--pend); }
+  .cell.ok { background: var(--ok); } .cell.rec { background: var(--rec); } .cell.lost { background: var(--lost); cursor: pointer; }
+  .cell.lost:hover { outline: 2px solid var(--text); outline-offset: 1px; }
+  .cell.sel { outline: 2px solid var(--accent); outline-offset: 1px; background: var(--accent); }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+                         margin-right: 5px; background: var(--c); vertical-align: -1px; }
+  .xfer { border-top: 1px solid var(--line); padding: 12px 0; display: grid; grid-template-columns: 1fr auto; gap: 12px; }
+  .xfer:first-of-type { border-top: 0; }
+  .xfer img { max-width: 180px; max-height: 140px; border-radius: 6px; border: 1px solid var(--line); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+  .b-ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  .b-bad { background: color-mix(in srgb, var(--lost) 18%, transparent); color: var(--lost); }
+  .b-run { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+  .muted { color: var(--muted); }
+  .missing { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--lost); word-break: break-all; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  tr.bad td { color: var(--lost); }
+  code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
+           padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none;
+           max-width: calc(100% - 32px); }
+  .toast.show { opacity: .95; }
+  .hidden { display: none !important; }
+  @media (max-width: 640px) { .xfer { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>LoRa AX.25 Web Station</h1>
+    <div class="meta" id="mode">กำลังเชื่อมต่อ…</div>
+  </div>
+  <div class="meta" id="updated"></div>
+</header>
+
+<main>
+  <section class="terms" id="terms"></section>
+
+  <section class="card live-only hidden">
+    <h2>รูปที่จะส่ง <span class="muted" style="font-weight:400">(โฟลเดอร์ images_to_send)</span></h2>
+    <div class="sendopts">
+      <label>ส่งจาก <select id="sendNode"></select></label>
+      <label>ย่อเหลือ <input type="number" id="optPx" value="320" min="64" max="2000"> px</label>
+      <label>คุณภาพ <input type="number" id="optQ" value="60" min="10" max="95"></label>
+      <label>ส่งซ้ำอัตโนมัติ <input type="number" id="optRounds" value="5" min="1" max="20"> รอบ</label>
+      <label title="ทดสอบ: จงใจทิ้ง packet รอบแรก">ทดสอบ loss <input type="number" id="optLoss" value="0" min="0" max="0.9" step="0.05"></label>
+      <label><input type="checkbox" id="optRaw"> ส่งไฟล์ต้นฉบับ (ไม่ย่อ)</label>
+      <label style="margin-left:auto"><button class="primary" onclick="$('upload').click()">อัปโหลดรูป…</button>
+        <input type="file" id="upload" accept="image/*" multiple class="hidden"></label>
+    </div>
+    <div class="imgs" id="imgs"></div>
+  </section>
+
+  <section class="tiles" id="tiles"></section>
+
+  <section class="card">
+    <h2>การรับไฟล์: packet ไหนรับได้ / รับไม่ได้</h2>
+    <div class="legend">
+      <span style="--c: var(--ok)">ได้รอบแรก</span>
+      <span style="--c: var(--rec)">หายรอบแรก ได้คืนจากการส่งซ้ำ</span>
+      <span style="--c: var(--lost)">หาย (คลิกเพื่อเลือกส่งใหม่)</span>
+      <span style="--c: var(--accent)">เลือกไว้</span>
+      <span style="--c: var(--pend)">ยังไม่ได้รับ / กำลังรับ</span>
+    </div>
+    <div id="rxTransfers"><p class="muted">ยังไม่มีการรับไฟล์</p></div>
+  </section>
+
+  <section class="card">
+    <h2>การส่งไฟล์</h2>
+    <div class="scroll"><table id="txTable"></table></div>
+  </section>
+
+  <section class="card">
+    <h2>Ping</h2>
+    <div class="scroll"><table id="pingTable"></table></div>
+  </section>
+
+  <section class="card">
+    <h2>Packet log ทั้งหมด</h2>
+    <div class="filters">
+      <select id="fStation"><option value="">ทุกฝั่ง</option><option>sender</option><option>receiver</option></select>
+      <select id="fEvent"><option value="">ทุกประเภท</option></select>
+      <input id="fText" placeholder="ค้นหา…">
+    </div>
+    <div class="scroll"><table id="logTable"></table></div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtT = t => t ? t.replace("T", " ").slice(5, 19) : "";
+const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+const n1 = v => v == null ? "–" : v.toFixed(1);
+let live = false;
+
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove("show"), 3500);
+}
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  return r.json();
+}
+
+/* ======================= terminals ======================= */
+const terms = {};   // id -> {el, out, since, hist, hi, info}
+
+function makeTerm(node) {
+  const wrap = document.createElement("div");
+  wrap.className = "card";
+  wrap.innerHTML = `
+    <h2><span class="dot"></span> <span class="title"></span> <span class="muted st" style="font-weight:400"></span>
+      <span class="quick">
+        <button data-c="/status">status</button><button data-c="/ping 4">ping</button>
+        <button data-c="/images">images</button><button data-c="/help">help</button><button data-c="/clear">clear</button>
+      </span></h2>
+    <div class="term"><div class="out"></div>
+      <form><span>&gt;</span><input placeholder="พิมพ์ข้อความ หรือ /help แล้วกด Enter" autocomplete="off" spellcheck="false"></form></div>`;
+  $("terms").appendChild(wrap);
+  const t = { el: wrap, out: wrap.querySelector(".out"), input: wrap.querySelector("input"), since: 0,
+              hist: [], hi: 0, prog: {} };
+  terms[node.id] = t;
+  wrap.querySelector("form").addEventListener("submit", e => {
+    e.preventDefault();
+    const line = t.input.value; t.input.value = "";
+    if (!line.trim()) return;
+    t.hist.push(line); t.hi = t.hist.length;
+    sendCmd(node.id, line);
+  });
+  t.input.addEventListener("keydown", e => {
+    if (e.key === "ArrowUp" && t.hi > 0) { t.input.value = t.hist[--t.hi]; e.preventDefault(); }
+    if (e.key === "ArrowDown") { t.hi = Math.min(t.hist.length, t.hi + 1); t.input.value = t.hist[t.hi] ?? ""; e.preventDefault(); }
+  });
+  wrap.querySelectorAll(".quick button").forEach(b => b.onclick = () => sendCmd(node.id, b.dataset.c));
+  return t;
+}
+
+function sendCmd(id, line) {
+  if (line.trim().toLowerCase() === "/clear") { terms[id].out.innerHTML = ""; terms[id].prog = {}; return; }
+  api("/api/cmd", { node: id, line });
+}
+
+function setTermHeader(t, n) {
+  t.el.querySelector(".title").textContent = `${n.mycall}  @ ${n.id}`;
+  t.el.querySelector(".st").textContent = `→ ${n.dest}` + (n.busy ? ` · กำลังทำ: ${n.busy}` : "") + (n.queued ? ` · คิว ${n.queued}` : "");
+  t.el.querySelector(".dot").className = "dot " + (!n.ready ? "" : n.busy ? "busy" : "on");
+}
+
+async function pollTerms() {
+  for (const [id, t] of Object.entries(terms)) {
+    try {
+      const r = await api(`/api/term?node=${encodeURIComponent(id)}&since=${t.since}`);
+      setTermHeader(t, r.node);
+      if (!r.lines.length) continue;
+      const atBottom = t.out.scrollHeight - t.out.scrollTop - t.out.clientHeight < 40;
+      for (const l of r.lines) {
+        let div = l.key && t.prog[l.key];
+        if (!div) {
+          div = document.createElement("div");
+          t.out.appendChild(div);
+          if (l.key) t.prog[l.key] = div;
+        }
+        div.className = "k-" + l.k;
+        div.innerHTML = `<span class="ts">${esc(l.t)}</span>${esc(l.s)}`;
+      }
+      while (t.out.childElementCount > 1500) t.out.firstChild.remove();
+      t.since = r.next;
+      if (atBottom) t.out.scrollTop = t.out.scrollHeight;
+    } catch { }
+  }
+}
+
+async function initLive() {
+  try {
+    const nodes = await api("/api/nodes");
+    if (!Array.isArray(nodes)) throw 0;
+    live = true;
+    document.querySelectorAll(".live-only").forEach(e => e.classList.remove("hidden"));
+    $("mode").textContent = `เชื่อมต่อ ${nodes.length} บอร์ด · ควบคุมผ่านหน้าเว็บได้`;
+    for (const n of nodes) makeTerm(n);
+    $("sendNode").innerHTML = nodes.map(n => `<option value="${esc(n.id)}">${esc(n.id)}</option>`).join("");
+    setInterval(pollTerms, 500);
+    setInterval(updateNodeSelect, 2000);
+    pollTerms(); loadImages();
+  } catch {
+    $("mode").textContent = "โหมดดู log อย่างเดียว (รัน python tools/web_station.py เพื่อควบคุมผ่านเว็บ)";
+  }
+}
+
+async function updateNodeSelect() {
+  const nodes = await api("/api/nodes");
+  const sel = $("sendNode"), cur = sel.value;
+  sel.innerHTML = nodes.map(n => `<option value="${esc(n.id)}" ${n.id === cur ? "selected" : ""}>${esc(n.mycall)} @ ${esc(n.id)} → ${esc(n.dest)}</option>`).join("");
+}
+
+/* ======================= images ======================= */
+async function loadImages() {
+  const list = await api("/api/images");
+  $("imgs").innerHTML = list.length ? list.map(f => `
+    <div class="imgc">
+      <img src="../images_to_send/${encodeURIComponent(f.name)}?${f.size}" alt="" loading="lazy">
+      <div class="n">${esc(f.name)}<div class="muted">${(f.size / 1024).toFixed(1)} KB</div></div>
+      <button class="primary" data-n="${esc(f.name)}">ส่ง</button>
+    </div>`).join("") : '<p class="muted">ยังไม่มีรูป กด "อัปโหลดรูป…" หรือวางไฟล์ในโฟลเดอร์ images_to_send</p>';
+  $("imgs").querySelectorAll("button[data-n]").forEach(b => b.onclick = () => {
+    const opts = [`px=${$("optPx").value}`, `q=${$("optQ").value}`, `rounds=${$("optRounds").value}`];
+    if (+$("optLoss").value > 0) opts.push(`loss=${$("optLoss").value}`);
+    if ($("optRaw").checked) opts.push("raw");
+    sendCmd($("sendNode").value, `/send ${b.dataset.n} ${opts.join(" ")}`);
+    toast(`สั่งส่ง ${b.dataset.n} แล้ว ดูความคืบหน้าใน terminal`);
+  });
+}
+$("upload").addEventListener("change", async e => {
+  for (const f of e.target.files) {
+    const r = await fetch(`/api/upload?name=${encodeURIComponent(f.name)}`, { method: "POST", body: f });
+    const j = await r.json();
+    toast(j.ok ? `อัปโหลด ${j.name} แล้ว` : `อัปโหลดไม่ได้: ${j.error}`);
+  }
+  e.target.value = "";
+  loadImages();
+});
+
+/* ======================= log dashboard ======================= */
+let events = [], lastSize = -1;
+const selected = new Map();   // transfer -> Set(seq)
+
+async function loadLog() {
+  try {
+    const r = await fetch("../logs/events.jsonl?" + Date.now(), { cache: "no-store" });
+    if (!r.ok) throw 0;
+    const text = await r.text();
+    if (text.length !== lastSize) {
+      lastSize = text.length;
+      events = text.split("\n").filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+      render();
+    }
+    $("updated").textContent = "log อัปเดต " + new Date().toLocaleTimeString() + " · " + events.length + " events";
+  } catch { $("updated").textContent = "ยังไม่มีไฟล์ log"; }
+}
+
+function render() { renderTiles(); renderRx(); renderTx(); renderPing(); renderLog(); }
+
+function renderTiles() {
+  const rxChunks = events.filter(e => e.event === "rx_chunk" && !e.dup);
+  const ends = latestEnds();
+  const lostFirst = ends.reduce((s, e) => s + (e.missing_first?.length || 0), 0);
+  const lostFinal = ends.reduce((s, e) => s + (e.missing_final?.length || 0), 0);
+  const pings = events.filter(e => e.event === "ping"), pingOk = pings.filter(p => p.ok);
+  const rssi = rxChunks.map(e => e.rssi).filter(v => v != null);
+  const bad = events.filter(e => e.event === "rx_bad" || e.event === "rx_error").length;
+  const tiles = [
+    ["ไฟล์ที่รับครบ", ends.filter(e => e.crc_ok).length + " / " + ends.length],
+    ["packet ข้อมูลที่ได้รับ", rxChunks.length],
+    ["หายในรอบแรก", lostFirst],
+    ["ยังหายอยู่", lostFinal],
+    ["packet เสีย (CRC/FCS)", bad],
+    ["Ping สำเร็จ", pings.length ? `${pingOk.length}/${pings.length} (${Math.round(100 * pingOk.length / pings.length)}%)` : "–"],
+    ["RTT เฉลี่ย", pingOk.length ? Math.round(avg(pingOk.map(p => p.rtt_ms))) + " ms" : "–"],
+    ["RSSI เฉลี่ย", rssi.length ? n1(avg(rssi)) + " dBm" : "–"],
+  ];
+  $("tiles").innerHTML = tiles.map(([l, v]) => `<div class="tile"><div class="v">${esc(v)}</div><div class="l">${esc(l)}</div></div>`).join("");
+}
+
+function latestEnds() {
+  const m = new Map();
+  for (const e of events) if (e.station === "receiver" && e.event === "transfer_end") m.set(e.transfer, e);
+  return [...m.values()];
+}
+
+function renderRx() {
+  const map = new Map();
+  for (const e of events) {
+    if (e.station !== "receiver" || !e.transfer) continue;
+    let t = map.get(e.transfer);
+    if (!t) map.set(e.transfer, t = { key: e.transfer, chunks: new Map(), nacks: 0 });
+    if (e.event === "transfer_start") Object.assign(t, { file: e.file, src: e.src, total: e.total, size: e.size, start: e.t });
+    if (e.event === "rx_chunk") { t.total ??= e.total; t.start ??= e.t; if (!t.chunks.has(e.seq)) t.chunks.set(e.seq, e); }
+    if (e.event === "nack") { t.nacks++; t.firstMissing ??= e.missing; }
+    if (e.event === "transfer_end") { t.end = e; t.file ??= e.file; t.src ??= e.src; t.total ??= e.total; }
+  }
+  const list = [...map.values()].reverse();
+  if (!list.length) { $("rxTransfers").innerHTML = '<p class="muted">ยังไม่มีการรับไฟล์</p>'; return; }
+
+  $("rxTransfers").innerHTML = list.map(t => {
+    const total = t.total || 0;
+    const firstMissing = new Set(t.end?.missing_first ?? t.firstMissing ?? []);
+    const finalMissing = t.end ? (t.end.missing_final || []) : [];
+    const sel = selected.get(t.key) || new Set();
+    for (const s of [...sel]) if (t.chunks.has(s)) sel.delete(s);
+    let ok = 0, rec = 0, lost = 0;
+    const cells = [];
+    for (let s = 0; s < total; s++) {
+      const c = t.chunks.get(s);
+      let cls = "", tip = `#${s}`;
+      if (c && !firstMissing.has(s)) { cls = "ok"; ok++; }
+      else if (c) { cls = "rec"; rec++; }
+      else if (t.end) { cls = sel.has(s) ? "lost sel" : "lost"; lost++; }
+      tip += c ? `  RSSI ${c.rssi} dBm  SNR ${c.snr} dB  ${fmtT(c.t)}` : t.end ? "  หาย · คลิกเพื่อเลือกส่งใหม่" : "  ยังไม่ได้รับ";
+      cells.push(`<div class="cell ${cls}" data-t="${esc(t.key)}" data-s="${s}" title="${esc(tip)}"></div>`);
+    }
+    const state = !t.end ? '<span class="badge b-run">กำลังรับ</span>'
+                : t.end.crc_ok ? '<span class="badge b-ok">ครบ · CRC OK</span>' : '<span class="badge b-bad">ไม่ครบ</span>';
+    const rssi = [...t.chunks.values()].map(c => c.rssi);
+    const img = t.end?.saved ? `<a href="../received_images/${encodeURIComponent(t.end.saved)}" target="_blank"><img src="../received_images/${encodeURIComponent(t.end.saved)}?${t.chunks.size}" alt=""></a>` : "";
+    const actions = live && t.end && finalMissing.length ? `<div class="actions">
+        <button class="primary" data-resend="${esc(t.key)}" data-mode="sel" ${sel.size ? "" : "disabled"}>ส่งใหม่ที่เลือก (${sel.size})</button>
+        <button data-resend="${esc(t.key)}" data-mode="all">ส่งใหม่ทั้งหมดที่หาย (${finalMissing.length})</button>
+        ${sel.size ? `<button data-clear="${esc(t.key)}">ล้างที่เลือก</button>` : ""}
+      </div>` : "";
+    return `<div class="xfer"><div>
+        <div><b>${esc(t.file || "(ไม่รู้ชื่อ)")}</b> จาก ${esc(t.src || "?")} ${state} <code class="muted">${esc(t.key)}</code></div>
+        <div class="muted">${esc(fmtT(t.start))} · ${total} packets · ${t.size ?? "?"} bytes · ได้ ${t.chunks.size}/${total} ·
+          ขอส่งซ้ำ ${t.nacks} ครั้ง · RSSI ${rssi.length ? n1(Math.min(...rssi)) + " … " + n1(Math.max(...rssi)) : "–"} dBm</div>
+        <div class="grid">${cells.join("")}</div>
+        <div class="muted">ได้รอบแรก ${ok} · ได้คืนจากส่งซ้ำ ${rec} · หาย ${lost}</div>
+        ${firstMissing.size ? `<div>หายรอบแรก: <span class="missing">${[...firstMissing].join(", ")}</span></div>` : ""}
+        ${finalMissing.length ? `<div>ยังหายอยู่: <span class="missing">${finalMissing.join(", ")}</span></div>` : ""}
+        ${actions}
+      </div><div>${img}</div></div>`;
+  }).join("");
+}
+
+$("rxTransfers").addEventListener("click", async e => {
+  const cell = e.target.closest(".cell.lost");
+  if (cell && live) {
+    const k = cell.dataset.t, s = +cell.dataset.s;
+    const set = selected.get(k) || new Set(); selected.set(k, set);
+    set.has(s) ? set.delete(s) : set.add(s);
+    renderRx(); return;
+  }
+  const clr = e.target.closest("[data-clear]");
+  if (clr) { selected.delete(clr.dataset.clear); renderRx(); return; }
+  const b = e.target.closest("[data-resend]");
+  if (!b) return;
+  const k = b.dataset.resend;
+  const seqs = b.dataset.mode === "all" ? "all" : [...(selected.get(k) || [])];
+  const r = await api("/api/resend", { transfer: k, seqs });
+  toast(r.message);
+  selected.delete(k);
+  renderRx();
+});
+
+function renderTx() {
+  const map = new Map();
+  for (const e of events) {
+    if (e.station !== "sender" || !e.transfer) continue;
+    let t = map.get(e.transfer);
+    if (!t) map.set(e.transfer, t = { sent: 0, fail: 0, drop: 0, manual: 0 });
+    if (e.event === "transfer_start") Object.assign(t, e);
+    if (e.event === "tx_chunk") { if (e.simulated_drop) t.drop++; else if (!e.ok) t.fail++; else if (e.round === "manual") t.manual++; else t.sent++; }
+    if (e.event === "transfer_end") t.end = e;
+  }
+  const rows = [...map.values()].filter(t => t.file).reverse();
+  $("txTable").innerHTML = `<tr><th>เวลา</th><th>ไฟล์</th><th>ไป</th><th>ขนาด</th><th>packets</th><th>ส่งไป</th><th>หายรอบแรก</th><th>รอบ</th><th>เวลา</th><th>ผล</th></tr>` +
+    (rows.length ? rows.map(t => `<tr>
+      <td>${esc(fmtT(t.t))}</td><td>${esc(t.file)}<div class="muted">${esc(t.src_file || "")}</div></td>
+      <td>${esc(t.dest)}</td><td>${t.size ?? ""} B</td><td>${t.total ?? ""}</td>
+      <td>${t.sent}${t.manual ? ` + ส่งใหม่ ${t.manual}` : ""}${t.drop ? ` <span class="muted">(ทดสอบทิ้ง ${t.drop})</span>` : ""}${t.fail ? ` <span class="missing">(ส่งไม่ได้ ${t.fail})</span>` : ""}</td>
+      <td>${t.end ? (t.end.missing_first?.length ?? 0) : ""}</td><td>${t.end?.rounds ?? ""}</td>
+      <td>${t.end ? t.end.duration_s + " s · " + t.end.bytes_per_s + " B/s" : ""}</td>
+      <td>${!t.end ? '<span class="badge b-run">กำลังส่ง</span>' : t.end.result === "ok" ? '<span class="badge b-ok">ok</span>' : `<span class="badge b-bad">${esc(t.end.result)}</span>`}</td>
+    </tr>`).join("") : `<tr><td colspan="10" class="muted">ยังไม่มีการส่ง</td></tr>`);
+}
+
+function renderPing() {
+  const p = events.filter(e => e.event === "ping").slice(-50).reverse();
+  $("pingTable").innerHTML = `<tr><th>เวลา</th><th>#</th><th>ไป</th><th>ผล</th><th>RTT</th><th>ปลายทางได้ยินเรา</th><th>เราได้ยินปลายทาง</th></tr>` +
+    (p.length ? p.map(e => `<tr class="${e.ok ? "" : "bad"}">
+      <td>${esc(fmtT(e.t))}</td><td>${e.seq}</td><td>${esc(e.dest)}</td>
+      <td>${e.ok ? "ตอบกลับ" : esc(e.reason || "timeout")}</td><td>${e.ok ? e.rtt_ms + " ms" : ""}</td>
+      <td>${e.ok ? `${e.rssi_remote} dBm / ${e.snr_remote} dB` : ""}</td>
+      <td>${e.ok ? `${e.rssi_local} dBm / ${e.snr_local} dB` : ""}</td></tr>`).join("")
+      : `<tr><td colspan="7" class="muted">ยังไม่มีการ ping</td></tr>`);
+}
+
+function renderLog() {
+  const types = [...new Set(events.map(e => e.event))].sort();
+  const sel = $("fEvent"), cur = sel.value;
+  sel.innerHTML = '<option value="">ทุกประเภท</option>' + types.map(t => `<option ${t === cur ? "selected" : ""}>${esc(t)}</option>`).join("");
+  const st = $("fStation").value, ev = sel.value, q = $("fText").value.toLowerCase();
+  const rows = events.filter(e => (!st || e.station === st) && (!ev || e.event === ev) &&
+                                  (!q || JSON.stringify(e).toLowerCase().includes(q))).slice(-500).reverse();
+  const detail = e => {
+    const { t, station, event, ...rest } = e;
+    return Object.entries(rest).map(([k, v]) => `${k}=${Array.isArray(v) ? "[" + v.length + "]" + (v.length ? " " + v.slice(0, 15).join(",") + (v.length > 15 ? "…" : "") : "") : v}`).join("  ");
+  };
+  const isBad = e => e.event === "rx_bad" || e.event === "rx_error" || (e.event === "ping" && !e.ok) ||
+                     (e.event === "tx_chunk" && (!e.ok || e.simulated_drop)) || e.event === "nack";
+  $("logTable").innerHTML = `<tr><th>เวลา</th><th>ฝั่ง</th><th>ประเภท</th><th>รายละเอียด</th></tr>` +
+    rows.map(e => `<tr class="${isBad(e) ? "bad" : ""}"><td>${esc(fmtT(e.t))}</td><td>${esc(e.station)}</td><td>${esc(e.event)}</td><td><code>${esc(detail(e))}</code></td></tr>`).join("");
+}
+
+["fStation", "fEvent", "fText"].forEach(id => $(id).addEventListener("input", renderLog));
+initLive();
+loadLog();
+setInterval(loadLog, 1500);
+</script>
+</body>
+</html>
