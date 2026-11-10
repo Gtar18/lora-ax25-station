@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LoRa Web Station</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+Thai:wght@400;600&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #6b7385; --line: #e3e6ec;
@@ -19,7 +22,8 @@
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
-         font: 14px/1.5 system-ui, "Segoe UI", "Noto Sans Thai", sans-serif; }
+         font: 14px/1.55 "Noto Sans Thai", system-ui, "Segoe UI", sans-serif; }
+  :root { --mono: "JetBrains Mono", "Noto Sans Thai", "Cascadia Mono", Consolas, monospace; }
   header { padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--card);
            display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
   header h1 { font-size: 18px; margin: 0; }
@@ -48,15 +52,24 @@
   @media (max-width: 700px) { .terms { grid-template-columns: 1fr; } }
   .term { background: var(--term-bg); color: var(--term-text); border-radius: 8px; overflow: hidden;
           display: flex; flex-direction: column; border: 1px solid var(--line); }
-  .term .out { height: 360px; overflow-y: auto; padding: 8px 10px; font: 12.5px/1.45 ui-monospace, Consolas, monospace;
+  .term .out { height: 400px; overflow-y: auto; padding: 10px 12px; font: 13.5px/1.6 var(--mono);
                white-space: pre-wrap; word-break: break-word; }
+  .term .h-head { color: #f5d06f; font-weight: 600; margin-top: 6px; }
+  .term .h-cmd { color: #7fd4ff; font-weight: 600; }
+  .term .h-desc { color: #c3cad6; }
   .term .out .ts { color: #5c6577; margin-right: 6px; }
   .term .k-in { color: #7fd4ff; } .term .k-tx { color: #8ab4ff; } .term .k-rx { color: #7ee2a8; }
   .term .k-err { color: #ff8a8a; } .term .k-sys { color: #aab2c0; } .term .k-prog { color: #f5d06f; }
   .term form { display: flex; border-top: 1px solid #262c38; }
   .term form span { padding: 8px 4px 8px 10px; color: #7fd4ff; font-family: ui-monospace, Consolas, monospace; }
-  .term form input { flex: 1; background: transparent; border: 0; color: var(--term-text); padding: 8px;
-                     font: 13px ui-monospace, Consolas, monospace; outline: none; border-radius: 0; }
+  .term form input { flex: 1; background: transparent; border: 0; color: var(--term-text); padding: 9px 8px;
+                     font: 14px var(--mono); outline: none; border-radius: 0; }
+  .term form span { font-family: var(--mono) !important; }
+  .radio-line { font: 12px var(--mono); color: var(--muted); margin: -4px 0 8px; }
+  .rform { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px 14px; align-items: end; }
+  .rform label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+  .rform input, .rform select { width: 100%; }
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 0; }
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--pend); }
   .dot.on { background: var(--ok); } .dot.busy { background: var(--rec); }
   .quick { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
@@ -91,7 +104,7 @@
   .missing { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--lost); word-break: break-all; }
   .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
   tr.bad td { color: var(--lost); }
-  code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  code { font-family: var(--mono); font-size: 12px; }
   .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
            padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none;
            max-width: calc(100% - 32px); }
@@ -111,6 +124,29 @@
 
 <main>
   <section class="terms" id="terms"></section>
+
+  <section class="card live-only hidden">
+    <h2>ตั้งค่าวิทยุ <span class="muted" style="font-weight:400">(ทุกบอร์ดต้องตรงกัน กด "ใช้กับทุกบอร์ด")</span></h2>
+    <div class="rform">
+      <label>Modem <select id="rModem"><option value="gfsk">GFSK</option><option value="fsk">FSK</option><option value="lora">LoRa</option></select></label>
+      <label>ความถี่ (MHz) <input type="number" id="rFreq" value="433" step="0.001" min="410" max="525"></label>
+      <label>กำลังส่ง (dBm) <input type="number" id="rPower" value="17" min="2" max="20"></label>
+      <label class="fsk-only">Bitrate (kbps) <input type="number" id="rBitrate" value="9.6" step="0.1" min="0.5" max="300"></label>
+      <label class="fsk-only">Deviation (kHz, ว่าง = auto) <input type="number" id="rDev" placeholder="auto" step="0.1" min="0.6" max="200"></label>
+      <label class="fsk-only">RX bandwidth (kHz, ว่าง = auto) <input type="number" id="rRxbw" placeholder="auto" step="0.1" min="5.2" max="500"></label>
+      <label class="fsk-only">GFSK BT <select id="rShaping"><option>0.3</option><option selected>0.5</option><option>0.7</option><option>1.0</option></select></label>
+      <label class="lora-only">LoRa SF <select id="rSf"><option>6</option><option>7</option><option>8</option><option selected>9</option><option>10</option><option>11</option><option>12</option></select></label>
+      <label class="lora-only">LoRa BW (kHz) <select id="rBw"><option>62.5</option><option selected>125</option><option>250</option><option>500</option></select></label>
+      <button class="primary" id="rApply">ใช้กับทุกบอร์ด</button>
+    </div>
+    <div class="presets">
+      <span class="muted" style="font-size:12px;align-self:center">ค่าสำเร็จรูป:</span>
+      <button data-p="gfsk,9.6">GFSK 9.6 kbps</button><button data-p="gfsk,19.2">GFSK 19.2</button>
+      <button data-p="gfsk,38.4">GFSK 38.4</button><button data-p="gfsk,100">GFSK 100</button>
+      <button data-p="gfsk,300">GFSK 300</button><button data-p="lora,9">LoRa SF9</button>
+      <button data-p="lora,12">LoRa SF12 (ไกลสุด)</button>
+    </div>
+  </section>
 
   <section class="card live-only hidden">
     <h2>รูปที่จะส่ง <span class="muted" style="font-weight:400">(โฟลเดอร์ images_to_send)</span></h2>
@@ -192,6 +228,7 @@ function makeTerm(node) {
         <button data-c="/status">status</button><button data-c="/ping 4">ping</button>
         <button data-c="/images">images</button><button data-c="/help">help</button><button data-c="/clear">clear</button>
       </span></h2>
+    <div class="radio-line"></div>
     <div class="term"><div class="out"></div>
       <form><span>&gt;</span><input placeholder="พิมพ์ข้อความ หรือ /help แล้วกด Enter" autocomplete="off" spellcheck="false"></form></div>`;
   $("terms").appendChild(wrap);
@@ -213,6 +250,13 @@ function makeTerm(node) {
   return t;
 }
 
+function helpHtml(s) {
+  if (s.startsWith("──")) return `<div class="h-head">${esc(s)}</div>`;
+  const m = s.match(/^(\s*)(\S.*?)(\s{2,})(.*)$/);
+  if (!m) return `<span class="h-desc">${esc(s)}</span>`;
+  return `${m[1]}<span class="h-cmd">${esc(m[2])}</span>${m[3]}<span class="h-desc">${esc(m[4])}</span>`;
+}
+
 function sendCmd(id, line) {
   if (line.trim().toLowerCase() === "/clear") { terms[id].out.innerHTML = ""; terms[id].prog = {}; return; }
   api("/api/cmd", { node: id, line });
@@ -222,6 +266,7 @@ function setTermHeader(t, n) {
   t.el.querySelector(".title").textContent = `${n.mycall}  @ ${n.id}`;
   t.el.querySelector(".st").textContent = `→ ${n.dest}` + (n.busy ? ` · กำลังทำ: ${n.busy}` : "") + (n.queued ? ` · คิว ${n.queued}` : "");
   t.el.querySelector(".dot").className = "dot " + (!n.ready ? "" : n.busy ? "busy" : "on");
+  t.el.querySelector(".radio-line").textContent = n.radio ? `📡 ${n.radio}  ·  สูงสุด ${n.maxinfo} bytes/เฟรม` : "";
 }
 
 async function pollTerms() {
@@ -239,7 +284,7 @@ async function pollTerms() {
           if (l.key) t.prog[l.key] = div;
         }
         div.className = "k-" + l.k;
-        div.innerHTML = `<span class="ts">${esc(l.t)}</span>${esc(l.s)}`;
+        div.innerHTML = l.k === "help" ? helpHtml(l.s) : `<span class="ts">${esc(l.t)}</span>${esc(l.s)}`;
       }
       while (t.out.childElementCount > 1500) t.out.firstChild.remove();
       t.since = r.next;
@@ -467,6 +512,40 @@ function renderLog() {
   $("logTable").innerHTML = `<tr><th>เวลา</th><th>ฝั่ง</th><th>ประเภท</th><th>รายละเอียด</th></tr>` +
     rows.map(e => `<tr class="${isBad(e) ? "bad" : ""}"><td>${esc(fmtT(e.t))}</td><td>${esc(e.station)}</td><td>${esc(e.event)}</td><td><code>${esc(detail(e))}</code></td></tr>`).join("");
 }
+
+/* ======================= radio settings ======================= */
+function radioVisibility() {
+  const lora = $("rModem").value === "lora";
+  document.querySelectorAll(".fsk-only").forEach(e => e.style.opacity = lora ? .35 : 1);
+  document.querySelectorAll(".lora-only").forEach(e => e.style.opacity = lora ? 1 : .35);
+}
+$("rModem").addEventListener("change", radioVisibility);
+function radioAll(cmds) {
+  const id = Object.keys(terms)[0];
+  if (!id) return;
+  for (const c of cmds) sendCmd(id, "/radioall " + c);
+  toast("ส่งคำสั่งวิทยุไปทุกบอร์ดแล้ว ดูผลใน terminal");
+}
+$("rApply").onclick = () => {
+  const m = $("rModem").value;
+  const cmds = [`/modem ${m}`, `/freq ${$("rFreq").value}`, `/power ${$("rPower").value}`];
+  if (m === "lora") cmds.push(`/sf ${$("rSf").value}`, `/bw ${$("rBw").value}`);
+  else {
+    cmds.push(`/bitrate ${$("rBitrate").value}`, `/dev ${$("rDev").value || "auto"}`, `/rxbw ${$("rRxbw").value || "auto"}`);
+    if (m === "gfsk") cmds.push(`/shaping ${$("rShaping").value}`);
+  }
+  radioAll(cmds);
+};
+document.querySelectorAll(".presets button").forEach(b => b.onclick = () => {
+  const [m, v] = b.dataset.p.split(",");
+  $("rModem").value = m; radioVisibility();
+  if (m === "lora") { $("rSf").value = v; radioAll(["/modem lora", `/sf ${v}`]); }
+  else {
+    $("rBitrate").value = v; $("rDev").value = ""; $("rRxbw").value = "";
+    radioAll([`/modem ${m}`, `/bitrate ${v}`, "/dev auto", "/rxbw auto"]);
+  }
+});
+radioVisibility();
 
 ["fStation", "fEvent", "fText"].forEach(id => $(id).addEventListener("input", renderLog));
 initLive();

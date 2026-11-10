@@ -9,8 +9,8 @@ LoRa AX.25 station - ส่งรูป / ping / รับรูป / หน้�
   python tools/station.py web                         # เปิดหน้าเว็บอย่างเดียว
 
 โปรโตคอลรูป (อยู่ใน info field ของเฟรม AX.25 ทุกแพ็กเก็ตขึ้นต้นด้วยไบต์ 0xA5):
-  S fid total(2) size(4) crc32(4) name     เริ่มไฟล์
-  D fid seq(2) total(2) data(<=200)        ข้อมูลแต่ละชิ้น
+  S fid total(2) size(4) crc32(4) chunk(1) name   เริ่มไฟล์
+  D fid seq(2) total(2) data(<=chunk)              ข้อมูลแต่ละชิ้น (LoRa 230 / FSK 39 bytes)
   E fid total(2)                           จบรอบ -> ตัวรับตอบ K (ครบ) หรือ N (รายการที่หาย)
   N fid count(2) seq(2)...                 ขอชิ้นที่หาย  -> ตัวส่งส่งซ้ำเฉพาะชิ้นนั้น
   K fid                                    ได้ครบแล้ว
@@ -49,7 +49,8 @@ IMG_DIR = ROOT / "images_to_send"
 RECV_DIR = ROOT / "received_images"
 LOG_DIR = ROOT / "logs"
 LOG_FILE = LOG_DIR / "events.jsonl"
-CHUNK = 200
+CHUNK = 200       # ค่าสำรอง (ขนาดจริงขึ้นกับ modem: maxinfo - 7)
+D_HDR = 7         # MAGIC + "D" + fid + seq(2) + total(2)
 MAGIC = b"\xa5"   # ไบต์นำหน้าแพ็กเก็ตรูป (ไม่ใช่ตัวอักษร จึงไม่ชนกับข้อความที่พิมพ์)
 for d in (IMG_DIR, RECV_DIR, LOG_DIR):
     d.mkdir(exist_ok=True)
@@ -121,6 +122,7 @@ class Node:
         self.stash = []
         threading.Thread(target=self._reader, daemon=True).start()
         self.mycall = None
+        self.maxinfo = 237
         for _ in range(5):
             self.write("")
             self.write("/machine on")
@@ -131,7 +133,10 @@ class Node:
         self.write("/status")
         st = self.wait_for("#STATUS,", 2)
         if st:
-            _, self.mycall, self.dest, _ = st.split(",")[:4]
+            p = st.split(",")
+            self.mycall, self.dest = p[1], p[2]
+            if len(p) > 5:
+                self.maxinfo = int(p[5])
 
     def _reader(self):
         buf = b""
@@ -240,7 +245,8 @@ def cmd_send(args):
 
 def send_one(node, dest, path, args):
     data, name = prepare_image(path, args.max_px, args.quality, args.raw)
-    total = math.ceil(len(data) / CHUNK)
+    C = node.maxinfo - D_HDR
+    total = math.ceil(len(data) / C)
     fid = random.randint(0, 255)
     crc = zlib.crc32(data)
     xfer = f"{node.mycall}#{fid:02X}@{datetime.now():%H%M%S}"
@@ -257,9 +263,9 @@ def send_one(node, dest, path, args):
         return ok
 
     def chunk(seq):
-        return MAGIC + b"D" + struct.pack(">BHH", fid, seq, total) + data[seq * CHUNK:(seq + 1) * CHUNK]
+        return MAGIC + b"D" + struct.pack(">BHH", fid, seq, total) + data[seq * C:(seq + 1) * C]
 
-    tx(MAGIC + b"S" + struct.pack(">BHII", fid, total, len(data), crc) + name.encode()[:120], "S")
+    tx(MAGIC + b"S" + struct.pack(">BHIIB", fid, total, len(data), crc, C) + name.encode()[:node.maxinfo - 15], "S")
 
     pending = list(range(total))
     first_missing = None
@@ -366,6 +372,7 @@ class Transfer:
         self.key = f"{src}#{fid:02X}@{datetime.now():%H%M%S}"
         self.name = f"unknown_{fid:02X}.jpg"
         self.total = None
+        self.chunk = None
         self.size = None
         self.crc = None
         self.chunks = {}
@@ -389,7 +396,7 @@ def cmd_rx(args):
 
     def finalize(tr, reason):
         missing = [s for s in range(tr.total or 0) if s not in tr.chunks]
-        data = b"".join(tr.chunks.get(s, b"\x00" * CHUNK) for s in range(tr.total or 0))
+        data = b"".join(tr.chunks.get(s, b"\x00" * (tr.chunk or CHUNK)) for s in range(tr.total or 0))
         if tr.size:
             data = data[:tr.size]
         crc_ok = tr.crc is not None and not missing and zlib.crc32(data) == tr.crc
@@ -447,8 +454,8 @@ def cmd_rx(args):
             tr.last = now
 
             if kind == b"S":
-                _, tr.total, tr.size, tr.crc = struct.unpack(">BHII", body[:11])
-                tr.name = re.sub(r"[^\w.\-]", "_", body[11:].decode("utf-8", "replace")) or tr.name
+                _, tr.total, tr.size, tr.crc, tr.chunk = struct.unpack(">BHIIB", body[:12])
+                tr.name = re.sub(r"[^\w.\-]", "_", body[12:].decode("utf-8", "replace")) or tr.name
                 log_event("receiver", "transfer_start", transfer=tr.key, src=tr.src, file=tr.name,
                           total=tr.total, size=tr.size, rssi=rssi, snr=snr)
                 print(f"\n>> เริ่มรับ {tr.name} จาก {tr.src}: {tr.size} bytes / {tr.total} packets")
@@ -458,6 +465,8 @@ def cmd_rx(args):
                 tr.total = tr.total or total
                 dup = seq in tr.chunks
                 tr.chunks[seq] = body[5:]
+                if seq < total - 1:
+                    tr.chunk = tr.chunk or len(body) - 5
                 log_event("receiver", "rx_chunk", transfer=tr.key, seq=seq, total=total, rssi=rssi,
                           snr=snr, dup=dup, after_nack=tr.first_missing is not None)
                 print(f"\r  {tr.name}: {len(tr.chunks)}/{tr.total}  RSSI {rssi:.0f}", end="", flush=True)
@@ -472,7 +481,7 @@ def cmd_rx(args):
                     if not tr.done:
                         finalize(tr, "complete")
                 else:
-                    m = missing[:100]
+                    m = missing[:max(1, (node.maxinfo - 5) // 2)]
                     reply(tr.src, MAGIC + b"N" + bytes([fid]) + struct.pack(f">H{len(m)}H", len(m), *m))
                     tr.nacks += 1
                     log_event("receiver", "nack", transfer=tr.key, missing=missing)

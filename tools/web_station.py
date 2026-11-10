@@ -28,7 +28,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from station import (CHUNK, IMG_DIR, LOG_DIR, MAGIC, RECV_DIR, ROOT,  # noqa: E402
+from station import (CHUNK, D_HDR, IMG_DIR, LOG_DIR, MAGIC, RECV_DIR, ROOT,  # noqa: E402
                      log_event, parse_rx_line, prepare_image)
 
 import serial  # noqa: E402
@@ -41,21 +41,38 @@ for d in (OUTBOX, INBOX):
 
 IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
 
-HELP = """คำสั่ง (พิมพ์แล้วกด Enter, ↑/↓ เรียกคำสั่งเก่า):
-  <ข้อความ>                          ส่งข้อความไปยัง dest
-  /ping [n]                          ping ไปยัง dest (ค่าเริ่มต้น 4 ครั้ง)
-  /send <ไฟล์> [loss=0.2] [rounds=5] [px=320] [q=60] [raw]
-                                     ส่งรูปจาก images_to_send
-                                       loss   = ทดสอบ: จงใจทิ้ง packet รอบแรก
-                                       rounds = จำนวนรอบส่งซ้ำอัตโนมัติ (1 = ไม่ส่งซ้ำเอง)
-  /images                            รายการรูปใน images_to_send
-  /resend <transfer> <1,5,9|all>     ส่ง packet ที่หายใหม่ (หรือคลิกช่องสีแดงในหน้าเว็บ)
-  /mycall CALL-SSID                  ตั้งชื่อบอร์ดนี้
-  /dest CALL-SSID                    ตั้งปลายทาง
-  /beacon on|off                     บีคอนอัตโนมัติ (ทุก 10 วินาที)
-  /status                            ค่าปัจจุบัน
-  /clear                             ล้างหน้าจอ
-  /help                              แสดงคำสั่งนี้"""
+HELP = """── ส่ง / ทดสอบ
+  <ข้อความ>                         ส่งข้อความไปยัง dest
+  /ping [n]                         ping ไปยัง dest (ค่าเริ่มต้น 4 ครั้ง)
+  /send <ไฟล์> [opts]               ส่งรูปจาก images_to_send
+      loss=0.2                      ทดสอบ: จงใจทิ้ง packet รอบแรก
+      rounds=5                      รอบส่งซ้ำอัตโนมัติ (1 = ไม่ส่งซ้ำเอง)
+      px=320  q=60  raw             ย่อรูป / คุณภาพ JPEG / ส่งต้นฉบับ
+  /images                           รายการรูปใน images_to_send
+  /resend <transfer> <1,5,9|all>    ส่ง packet ที่หายใหม่ (หรือคลิกช่องสีแดง)
+  /beacon on|off                    บีคอนอัตโนมัติทุก 10 วินาที
+── สถานี
+  /mycall CALL-SSID                 ตั้งชื่อบอร์ดนี้
+  /dest CALL-SSID                   ตั้งปลายทาง
+  /status                           ค่าปัจจุบัน
+── วิทยุ (ทุกบอร์ดต้องตั้งให้ตรงกัน)
+  /modem lora|fsk|gfsk              เลือก modem
+  /bitrate <kbps>                   FSK/GFSK 0.5 - 300 kbps  เช่น /bitrate 9.6
+  /dev <kHz>|auto                   FSK/GFSK frequency deviation
+  /rxbw <kHz>|auto                  FSK/GFSK receiver bandwidth
+  /shaping 0.3|0.5|0.7|1.0          GFSK Gaussian BT
+  /sf <6-12>    /bw <kHz>           LoRa spreading factor / bandwidth
+  /freq <MHz>                       ความถี่ 410 - 525 MHz
+  /power <dBm>                      กำลังส่ง 2 - 17 (20 = PA boost)
+  /radio                            แสดงค่าวิทยุ
+  /radio reset                      คืนค่าเริ่มต้น (GFSK 9.6 kbps)
+  /radioall <คำสั่งวิทยุ>             ใช้กับทุกบอร์ดพร้อมกัน  เช่น /radioall /bitrate 19.2
+── อื่นๆ
+  /clear                            ล้างหน้าจอ
+  /help                             แสดงคำสั่งนี้
+  ↑ / ↓                             เรียกคำสั่งเก่า"""
+
+RADIO_CMDS = ("/modem", "/bitrate", "/br", "/dev", "/rxbw", "/shaping", "/freq", "/power", "/sf", "/bw", "/radio")
 
 
 def safe_name(s):
@@ -90,7 +107,7 @@ class Transfer:
         self.src, self.fid = src, fid
         self.key = key or f"{src}#{fid:02X}@{datetime.now():%H%M%S}"
         self.name = f"unknown_{fid:02X}.jpg"
-        self.total = self.size = self.crc = None
+        self.total = self.size = self.crc = self.chunk = None
         self.chunks = {}
         self.first_missing = None
         self.nacks = 0
@@ -104,13 +121,14 @@ class Transfer:
 
     def to_json(self):
         return {"src": self.src, "fid": self.fid, "key": self.key, "name": self.name, "total": self.total,
-                "size": self.size, "crc": self.crc, "first_missing": self.first_missing, "nacks": self.nacks,
+                "size": self.size, "crc": self.crc, "chunk": self.chunk, "first_missing": self.first_missing, "nacks": self.nacks,
                 "saved": self.saved, "t0": self.t0, "chunks": {str(k): v.hex() for k, v in self.chunks.items()}}
 
     @classmethod
     def from_json(cls, d):
         t = cls(d["src"], d["fid"], d["key"])
         t.name, t.total, t.size, t.crc = d["name"], d["total"], d["size"], d["crc"]
+        t.chunk = d.get("chunk") or CHUNK
         t.first_missing, t.nacks, t.saved, t.t0 = d["first_missing"], d["nacks"], d["saved"], d["t0"]
         t.chunks = {int(k): bytes.fromhex(v) for k, v in d["chunks"].items()}
         t.done, t.finalized_count, t.last = True, len(t.chunks), t.t0
@@ -127,6 +145,7 @@ class Node:
         self.resp = queue.Queue()     # คำตอบของคำสั่ง (#TX #OK #ERR #STATUS #PING ...)
         self.ctrl = queue.Queue()     # เฟรม K/N ที่ส่งมาหาเรา (ใช้ตอนส่งไฟล์)
         self.mycall = self.dest = "?"
+        self.modem, self.radio, self.maxinfo = "?", "", 237
         self.ready = False
         self.busy = None
         self.transfers = {}
@@ -146,6 +165,7 @@ class Node:
     # ---------- infra
     def info(self):
         return {"id": self.port, "mycall": self.mycall, "dest": self.dest, "ready": self.ready,
+                "modem": self.modem, "radio": self.radio, "maxinfo": self.maxinfo,
                 "busy": self.busy, "queued": self.jobs.qsize()}
 
     def write(self, line):
@@ -214,11 +234,15 @@ class Node:
         self._refresh_status()
         self.ready = True
         self.term.add(f"เชื่อมต่อ {self.port} แล้ว: mycall={self.mycall} dest={self.dest}   พิมพ์ /help", "sys")
+        self.term.add(f"[RADIO] {self.radio}", "sys")
 
     def _refresh_status(self):
         r = self.request("/status", ("#STATUS,",), 2)
         if r:
-            _, self.mycall, self.dest, beacon = r.split(",")[:4]
+            p = r.split(",")
+            self.mycall, self.dest, beacon = p[1], p[2], p[3]
+            if len(p) >= 7:
+                self.modem, self.maxinfo, self.radio = p[4], int(p[5]), ",".join(p[6:])
             return beacon
         return None
 
@@ -276,9 +300,9 @@ class Node:
             tr = self.transfers[k] = Transfer(src, fid)
         tr.last = time.time()
 
-        if kind == b"S" and len(body) >= 11:
-            _, tr.total, tr.size, tr.crc = struct.unpack(">BHII", body[:11])
-            tr.name = safe_name(body[11:].decode("utf-8", "replace")) or tr.name
+        if kind == b"S" and len(body) >= 12:
+            _, tr.total, tr.size, tr.crc, tr.chunk = struct.unpack(">BHIIB", body[:12])
+            tr.name = safe_name(body[12:].decode("utf-8", "replace")) or tr.name
             log_event("receiver", "transfer_start", node=self.port, transfer=tr.key, src=src, file=tr.name,
                       total=tr.total, size=tr.size, rssi=rssi, snr=snr)
             self.term.add(f"[FILE] เริ่มรับ {tr.name} จาก {src}: {tr.size} bytes / {tr.total} packets", "rx")
@@ -289,6 +313,8 @@ class Node:
             late = tr.done
             dup = seq in tr.chunks
             tr.chunks[seq] = body[5:]
+            if seq < total - 1:
+                tr.chunk = tr.chunk or len(body) - 5
             log_event("receiver", "rx_chunk", node=self.port, transfer=tr.key, seq=seq, total=total,
                       rssi=rssi, snr=snr, dup=dup, after_nack=tr.first_missing is not None)
             label = "ส่งซ้ำ" if late or tr.first_missing is not None else "รับ"
@@ -307,7 +333,7 @@ class Node:
                 if not tr.done:
                     self._finalize(tr, "complete")
             else:
-                m = missing[:100]
+                m = missing[:max(1, (self.maxinfo - 5) // 2)]
                 payload = MAGIC + b"N" + bytes([fid]) + struct.pack(f">H{len(m)}H", len(m), *m)
                 self.submit(lambda d=src, p=payload: self.send_bin(d, p), "reply N")
                 tr.nacks += 1
@@ -322,7 +348,7 @@ class Node:
 
     def _finalize(self, tr, reason):
         missing = tr.missing()
-        data = b"".join(tr.chunks.get(s, b"\x00" * CHUNK) for s in range(tr.total or 0))
+        data = b"".join(tr.chunks.get(s, b"\x00" * (tr.chunk or CHUNK)) for s in range(tr.total or 0))
         if tr.size:
             data = data[:tr.size]
         crc_ok = tr.crc is not None and not missing and zlib.crc32(data) == tr.crc
@@ -382,7 +408,7 @@ class Node:
         cmd, args = parts[0].lower(), parts[1:]
 
         if cmd == "/help":
-            self.term.add(HELP, "sys")
+            self.term.add(HELP, "help")
         elif cmd == "/images":
             files = list_images()
             self.term.add("\n".join(f"  {f['name']}  ({f['size']} bytes)" for f in files)
@@ -420,6 +446,20 @@ class Node:
             self.submit(lambda: self._job_ping(n), f"ping x{n}")
         elif cmd in ("/mycall", "/dest", "/beacon"):
             self.submit(lambda: self._job_set(line), cmd)
+        elif cmd == "/radio" and not args:
+            self.submit(self._job_status, "status")
+        elif cmd in RADIO_CMDS:
+            self.submit(lambda: self._job_set(line), cmd)
+        elif cmd == "/radioall":
+            sub = " ".join(args)
+            if not sub.split() or sub.split()[0].lower() not in RADIO_CMDS:
+                self.term.add("รูปแบบ: /radioall /bitrate 19.2   (ใช้ได้กับคำสั่งวิทยุเท่านั้น)", "err")
+                return
+            for n in STATION.nodes.values():
+                if n is not self:
+                    n.term.add(f"> {sub}   (จาก /radioall ที่ {self.port})", "in")
+                n.submit(lambda n=n: n._job_set(sub), sub.split()[0])
+            self.term.add(f"[RADIO] ส่งคำสั่ง {sub} ไปทุกบอร์ด ({len(STATION.nodes)})", "sys")
         elif cmd == "/status":
             self.submit(self._job_status, "status")
         elif cmd == "/clear":
@@ -438,9 +478,10 @@ class Node:
     def _job_status(self):
         b = self._refresh_status()
         self.term.add(f"[INFO] mycall={self.mycall}  dest={self.dest}  beacon={b}  port={self.port}", "sys")
+        self.term.add(f"[RADIO] {self.radio}   (ข้อมูลสูงสุด {self.maxinfo} bytes/เฟรม)", "sys")
 
     def _job_set(self, line):
-        r = self.request(line, ("#OK,", "#ERR,"), 3)
+        r = self.request(line, ("#OK,", "#ERR,"), 4)
         if r and r.startswith("#OK"):
             self._job_status()
         else:
@@ -501,27 +542,29 @@ class Node:
     def _job_send_file(self, path, opt):
         dest = self.dest
         data, name = prepare_image(path, opt["px"], opt["q"], opt["raw"])
-        total = math.ceil(len(data) / CHUNK)
+        C = self.maxinfo - D_HDR
+        total = math.ceil(len(data) / C)
         fid = random.randint(0, 255)
         crc = zlib.crc32(data)
         xfer = f"{self.mycall}#{fid:02X}@{datetime.now():%H%M%S}"
         meta = {"transfer": xfer, "src": self.mycall, "dest": dest, "fid": fid, "file": name,
-                "total": total, "size": len(data), "crc": crc}
+                "total": total, "chunk": C, "size": len(data), "crc": crc}
         (OUTBOX / f"{safe_name(self.mycall)}_{fid:02X}.bin").write_bytes(data)
         (OUTBOX / f"{safe_name(self.mycall)}_{fid:02X}.json").write_text(json.dumps(meta), encoding="utf-8")
 
         self.term.add(f"[FILE] ส่ง {path.name} → {name}  {len(data)} bytes, {total} packets → {dest}"
-                      f"  (~{total * 1.6:.0f} s){'  [ทดสอบ loss=' + str(opt['loss']) + ']' if opt['loss'] else ''}", "tx")
+                      f"  [{self.radio}]{'  [ทดสอบ loss=' + str(opt['loss']) + ']' if opt['loss'] else ''}", "tx")
         log_event("sender", "transfer_start", node=self.port, transfer=xfer, fid=fid, file=name,
-                  src_file=path.name, size=len(data), total=total, dest=dest)
+                  src_file=path.name, size=len(data), total=total, dest=dest, chunk=C, radio=self.radio)
         while not self.ctrl.empty():
             self.ctrl.get_nowait()
         t0 = time.time()
 
         def chunk(seq):
-            return MAGIC + b"D" + struct.pack(">BHH", fid, seq, total) + data[seq * CHUNK:(seq + 1) * CHUNK]
+            return MAGIC + b"D" + struct.pack(">BHH", fid, seq, total) + data[seq * C:(seq + 1) * C]
 
-        self.send_bin(dest, MAGIC + b"S" + struct.pack(">BHII", fid, total, len(data), crc) + name.encode()[:120])
+        self.send_bin(dest, MAGIC + b"S" + struct.pack(">BHIIB", fid, total, len(data), crc, C)
+                      + name.encode()[:self.maxinfo - 15])
         pending, rnd, first_missing, result = list(range(total)), 1, None, "fail"
         while True:
             for i, seq in enumerate(pending):
@@ -565,13 +608,18 @@ class Node:
 
     def _job_resend(self, meta, data, seqs, rx_key):
         dest, fid, total = meta["dest"], meta["fid"], meta["total"]
+        C = meta.get("chunk", CHUNK)
+        if C + D_HDR > self.maxinfo:
+            self.term.add(f"[RESEND] ไฟล์นี้ส่งด้วย packet {C + D_HDR} bytes แต่ modem ตอนนี้รับได้ {self.maxinfo}"
+                          f" → เปลี่ยน modem กลับเป็นแบบเดิมก่อน", "err")
+            return
         self.term.add(f"[RESEND] {meta['file']}: ส่งใหม่ {len(seqs)} packet {seqs[:20]}"
                       f"{' ...' if len(seqs) > 20 else ''} → {dest}", "tx")
         while not self.ctrl.empty():
             self.ctrl.get_nowait()
         pkey = f"rs-{rx_key}-{time.time():.0f}"
         for i, seq in enumerate(seqs):
-            pkt = MAGIC + b"D" + struct.pack(">BHH", fid, seq, total) + data[seq * CHUNK:(seq + 1) * CHUNK]
+            pkt = MAGIC + b"D" + struct.pack(">BHH", fid, seq, total) + data[seq * C:(seq + 1) * C]
             ok, air = self.send_bin(dest, pkt)
             log_event("sender", "tx_chunk", node=self.port, transfer=meta["transfer"], seq=seq, total=total,
                       round="manual", ok=ok, airtime_ms=air)
